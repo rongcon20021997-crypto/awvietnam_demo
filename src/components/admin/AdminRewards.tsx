@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { mockRewardRequests } from '../../mockData';
 import { RewardRequest } from '../../types';
+import { supabase } from '../../lib/supabase';
 
 const statusConfig = {
   pending: { label: 'Chờ duyệt', color: 'bg-amber-100 text-amber-700' },
@@ -9,17 +10,56 @@ const statusConfig = {
 };
 
 export default function AdminRewards() {
-  const [requests, setRequests] = useState(mockRewardRequests);
+  const [requests, setRequests] = useState<RewardRequest[]>([]);
   const [selected, setSelected] = useState<RewardRequest | null>(null);
 
-  const handleApprove = (id: string) => {
-    setRequests(prev => prev.map(r => r.id === id ? { ...r, status: 'approved' as const } : r));
-    setSelected(null);
+  useEffect(() => {
+    fetchRequests();
+  }, []);
+
+  const fetchRequests = async () => {
+    const { data, error } = await supabase
+      .from('reward_requests')
+      .select('*')
+      .order('requested_at', { ascending: false });
+
+    if (data) {
+      const formatted = data.map((r: any) => ({
+        ...r,
+        technicianName: r.technician_id, // Join would be better
+        requestedAt: r.requested_at,
+        bankAccount: r.bank_account,
+        giftItem: r.gift_item
+      }));
+      setRequests(formatted);
+    } else if (error) {
+      console.error('Fetch rewards error:', error);
+      setRequests([]);
+    }
   };
 
-  const handlePaid = (id: string) => {
-    setRequests(prev => prev.map(r => r.id === id ? { ...r, status: 'paid' as const } : r));
-    setSelected(null);
+  const handleApprove = async (id: string) => {
+    const { error } = await supabase
+      .from('reward_requests')
+      .update({ status: 'approved' })
+      .eq('id', id);
+
+    if (!error) {
+      setRequests(prev => prev.map(r => r.id === id ? { ...r, status: 'approved' as const } : r));
+      setSelected(null);
+    }
+  };
+
+  const handlePaid = async (id: string) => {
+    const { error } = await supabase
+      .from('reward_requests')
+      .update({ status: 'paid' })
+      .eq('id', id);
+
+    if (!error) {
+      setRequests(prev => prev.map(r => r.id === id ? { ...r, status: 'paid' as const } : r));
+      setSelected(null);
+    }
   };
 
   const totalPending = requests.filter(r => r.status === 'pending').length;

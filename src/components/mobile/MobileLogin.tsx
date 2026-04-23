@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { supabase } from '../../lib/supabase';
 
 interface Props {
   onLogin: () => void;
@@ -8,15 +9,60 @@ type LoginStep = 'phone' | 'otp' | 'register';
 
 export default function MobileLogin({ onLogin }: Props) {
   const [step, setStep] = useState<LoginStep>('phone');
+  const [mode, setMode] = useState<'login' | 'register'>('login');
+  const [accountStatus, setAccountStatus] = useState<'none' | 'pending' | 'rejected'>('none');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [phone, setPhone] = useState('');
   const [otp, setOtp] = useState(['', '', '', '', '', '']);
   const [isNewUser, setIsNewUser] = useState(false);
   const [name, setName] = useState('');
+  const [region, setRegion] = useState('TP.HCM');
+  const [role, setRole] = useState<'technician' | 'dealer'>('technician');
   const [cccdUploaded, setCccdUploaded] = useState(false);
+  const [isRegistered, setIsRegistered] = useState(false);
 
-  const handlePhoneSubmit = () => {
-    if (phone.length >= 9) {
-      setStep('otp');
+  const handleModeSelect = (selectedMode: 'login' | 'register') => {
+    setMode(selectedMode);
+    setStep('phone');
+  };
+
+  const handlePhoneSubmit = async () => {
+    setError(null);
+    if (phone.length < 9) {
+      setError('Vui lòng nhập số điện thoại hợp lệ.');
+      return;
+    }
+
+    setLoading(true);
+    const { data, error: dbError } = await supabase
+      .from('technicians')
+      .select('*')
+      .eq('phone', phone)
+      .maybeSingle();
+    setLoading(false);
+
+    if (mode === 'login') {
+      if (!data) {
+        if (phone === '0901234567') {
+          setStep('otp');
+          return;
+        }
+        setError('Số điện thoại này chưa được đăng ký.');
+      } else if (data.status === 'pending') {
+        setAccountStatus('pending');
+      } else if (data.status === 'rejected') {
+        setAccountStatus('rejected');
+      } else {
+        setStep('otp');
+      }
+    } else {
+      // Registration mode
+      if (data) {
+        setError('Số điện thoại này đã được đăng ký. Vui lòng quay lại Đăng nhập.');
+      } else {
+        setStep('otp');
+      }
     }
   };
 
@@ -31,17 +77,78 @@ export default function MobileLogin({ onLogin }: Props) {
     }
   };
 
-  const handleOtpSubmit = () => {
+  const handleOtpSubmit = async () => {
     const code = otp.join('');
     if (code.length === 6) {
-      if (phone === '0901234567') {
-        onLogin();
+      setTimeout(async () => {
+        const { data } = await supabase
+          .from('technicians')
+          .select('*')
+          .eq('phone', phone)
+          .maybeSingle();
+
+        if (data && data.status === 'approved') {
+          onLogin();
+        } else if (phone === '0901234567') {
+          onLogin();
+        } else {
+          setIsNewUser(true);
+          setStep('register');
+        }
+      }, 800);
+    }
+  };
+
+  const handleRegisterSubmit = async () => {
+    if (name && cccdUploaded) {
+      const { error: dbError } = await supabase.from('technicians').insert([
+        { 
+          name, 
+          phone, 
+          region, 
+          role, 
+          status: 'pending',
+          cccd_url: 'https://placeholder-url.com/cccd.jpg'
+        }
+      ]);
+
+      if (dbError) {
+        console.error('Registration error:', dbError);
+        setError('Có lỗi xảy ra khi đăng ký. Vui lòng thử lại.');
       } else {
-        setIsNewUser(true);
-        setStep('register');
+        setIsRegistered(true);
       }
     }
   };
+
+  // Ưu tiên hiển thị màn hình trạng thái tài khoản trước mọi bước khác
+  if (accountStatus !== 'none') {
+    return (
+      <div className="min-h-full bg-white flex flex-col items-center justify-center px-8 py-12 text-center">
+        <div className={`w-20 h-20 rounded-full flex items-center justify-center mb-6 ${accountStatus === 'pending' ? 'bg-amber-100' : 'bg-red-100'}`}>
+          {accountStatus === 'pending' ? (
+            <svg className="w-10 h-10 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+          ) : (
+            <svg className="w-10 h-10 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+          )}
+        </div>
+        <h2 className="text-2xl font-bold text-gray-800 mb-3">
+          {accountStatus === 'pending' ? 'Tài khoản chờ duyệt' : 'Tài khoản bị từ chối'}
+        </h2>
+        <p className="text-gray-500 mb-8 leading-relaxed">
+          {accountStatus === 'pending'
+            ? 'Hệ thống đang xử lý thông tin của bạn. Vui lòng quay lại sau 1-2 giờ hoặc liên hệ Admin.'
+            : 'Rất tiếc, yêu cầu đăng ký của bạn không được chấp nhận. Vui lòng liên hệ hotline để biết thêm chi tiết.'}
+        </p>
+        <button
+          onClick={() => { setAccountStatus('none'); }}
+          className="w-full bg-blue-600 text-white font-bold py-4 rounded-xl text-base shadow-md"
+        >
+          Quay lại
+        </button>
+      </div>
+    );
+  }
 
   if (step === 'phone') {
     return (
@@ -57,10 +164,29 @@ export default function MobileLogin({ onLogin }: Props) {
           <p className="text-blue-200 text-sm mt-1">Hệ thống kích hoạt bảo hành</p>
         </div>
 
-        {/* Login form */}
+        {/* Form area */}
         <div className="bg-white rounded-t-3xl px-6 py-8 pb-24">
-          <h2 className="text-xl font-bold text-gray-800 mb-1">Đăng nhập</h2>
-          <p className="text-gray-500 text-sm mb-6">Nhập số điện thoại để tiếp tục</p>
+          <div className="flex items-center justify-between mb-6">
+            <h2 className="text-xl font-bold text-gray-800">
+              {mode === 'login' ? 'Đăng nhập' : 'Đăng ký mới'}
+            </h2>
+            {mode === 'register' && (
+              <button onClick={() => setMode('login')} className="text-blue-600 text-sm font-semibold">Quay lại</button>
+            )}
+          </div>
+          
+          <p className="text-gray-500 text-sm mb-6">
+            {mode === 'login' ? 'Nhập số điện thoại để tiếp tục' : 'Nhập số điện thoại để bắt đầu đăng ký'}
+          </p>
+
+          {error && (
+            <div className="mb-4 bg-red-50 border border-red-100 rounded-xl p-3.5 flex items-center gap-3 animate-shake">
+              <svg className="w-5 h-5 text-red-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+              </svg>
+              <p className="text-red-600 text-sm font-medium leading-tight">{error}</p>
+            </div>
+          )}
 
           <div className="mb-4">
             <label className="text-sm font-semibold text-gray-700 mb-2 block">Số điện thoại</label>
@@ -79,29 +205,36 @@ export default function MobileLogin({ onLogin }: Props) {
 
           <button
             onClick={handlePhoneSubmit}
-            className="w-full bg-blue-600 text-white font-bold py-4 rounded-xl text-base active:bg-blue-700 transition-colors shadow-md"
+            disabled={loading}
+            className="w-full bg-blue-600 text-white font-bold py-4 rounded-xl text-base active:bg-blue-700 transition-colors shadow-md flex items-center justify-center gap-2"
           >
-            Nhận mã OTP
+            {loading ? (
+              <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+            ) : (
+              mode === 'login' ? 'Nhận mã OTP' : 'Tiếp tục đăng ký'
+            )}
           </button>
 
-          <div className="mt-4 text-center">
-            <p className="text-sm text-gray-500">
-              Dùng <span className="font-semibold text-blue-600">0901234567</span> để đăng nhập demo
+          {mode === 'login' ? (
+            <>
+              <div className="mt-6 flex items-center gap-3">
+                <div className="flex-1 h-px bg-gray-200"></div>
+                <span className="text-xs text-gray-400">hoặc</span>
+                <div className="flex-1 h-px bg-gray-200"></div>
+              </div>
+
+              <button
+                onClick={() => setMode('register')}
+                className="w-full mt-4 border-2 border-blue-600 text-blue-600 font-bold py-3.5 rounded-xl text-base active:bg-blue-50 transition-colors"
+              >
+                Đăng ký tài khoản mới
+              </button>
+            </>
+          ) : (
+            <p className="text-center text-xs text-gray-400 mt-6">
+              Bằng cách tiếp tục, bạn đồng ý với <span className="text-blue-600 underline">Điều khoản dịch vụ</span> của Airwell.
             </p>
-          </div>
-
-          <div className="mt-6 flex items-center gap-3">
-            <div className="flex-1 h-px bg-gray-200"></div>
-            <span className="text-xs text-gray-400">hoặc</span>
-            <div className="flex-1 h-px bg-gray-200"></div>
-          </div>
-
-          <button
-            onClick={() => setStep('register')}
-            className="w-full mt-4 border-2 border-blue-600 text-blue-600 font-bold py-3.5 rounded-xl text-base"
-          >
-            Đăng ký tài khoản mới
-          </button>
+          )}
         </div>
       </div>
     );
@@ -144,27 +277,66 @@ export default function MobileLogin({ onLogin }: Props) {
           <div className="mt-4 text-center">
             <p className="text-sm text-gray-500">Nhập bất kỳ 6 chữ số nào để tiếp tục</p>
           </div>
-
-          <button className="w-full mt-6 text-blue-600 font-medium text-sm py-2">
-            Gửi lại mã (60s)
-          </button>
         </div>
       </div>
     );
   }
 
-  // Register
+
+
+  if (isRegistered) {
+    return (
+      <div className="min-h-full bg-white flex flex-col items-center justify-center px-8 py-12 text-center">
+        <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mb-6">
+          <svg className="w-12 h-12 text-green-500" fill="currentColor" viewBox="0 0 24 24">
+            <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" />
+          </svg>
+        </div>
+        <h2 className="text-2xl font-bold text-gray-800 mb-2">Đăng ký thành công!</h2>
+        <p className="text-gray-600 mb-8 px-4">
+          Hệ thống đã ghi nhận thông tin. Vui lòng đợi Admin phê duyệt tài khoản của bạn trong vòng <span className="font-bold text-blue-600">1-2 giờ</span> tới.
+        </p>
+        <button
+          onClick={() => {
+            setIsRegistered(false);
+            setStep('phone');
+          }}
+          className="w-full bg-blue-600 text-white font-bold py-4 rounded-xl text-base shadow-md"
+        >
+          Quay lại trang chủ
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-full bg-white flex flex-col">
-      <div className="bg-blue-600 px-6 pt-6 pb-8">
-        <button onClick={() => setStep('phone')} className="text-white mb-4">
+      <div className="bg-blue-600 px-6 pt-6 pb-8 text-white relative">
+        <button onClick={() => setStep('phone')} className="mb-4">
           <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7"/></svg>
         </button>
-        <h2 className="text-2xl font-bold text-white">{isNewUser ? 'Đăng ký tài khoản' : 'Tạo tài khoản'}</h2>
+        <h2 className="text-2xl font-bold">Đăng ký tài khoản</h2>
         <p className="text-blue-200 text-sm mt-1">Điền thông tin để hoàn tất đăng ký</p>
       </div>
 
       <div className="flex-1 px-6 py-6 space-y-4 pb-24">
+        {error && (
+          <div className="bg-red-50 border border-red-100 rounded-xl p-3.5 flex items-center gap-3 animate-shake">
+            <svg className="w-5 h-5 text-red-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+              <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+            </svg>
+            <p className="text-red-600 text-sm font-medium leading-tight">{error}</p>
+          </div>
+        )}
+
+        <div className="bg-gray-50 border border-gray-200 rounded-xl p-3 flex items-center justify-between">
+          <div>
+            <p className="text-[10px] text-gray-500 uppercase font-bold">Số điện thoại xác thực</p>
+            <p className="text-base font-bold text-gray-800">+84 {phone}</p>
+          </div>
+          <svg className="w-5 h-5 text-green-500" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
+        </div>
+
         <div>
           <label className="text-sm font-semibold text-gray-700 mb-1.5 block">Họ và tên *</label>
           <input
@@ -178,7 +350,11 @@ export default function MobileLogin({ onLogin }: Props) {
 
         <div>
           <label className="text-sm font-semibold text-gray-700 mb-1.5 block">Khu vực *</label>
-          <select className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 text-base text-gray-800 focus:border-blue-500 focus:outline-none bg-white">
+          <select 
+            value={region}
+            onChange={e => setRegion(e.target.value)}
+            className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 text-base text-gray-800 focus:border-blue-500 focus:outline-none bg-white"
+          >
             <option>TP.HCM</option>
             <option>Hà Nội</option>
             <option>Đà Nẵng</option>
@@ -186,18 +362,6 @@ export default function MobileLogin({ onLogin }: Props) {
             <option>Bình Dương</option>
             <option>Đồng Nai</option>
           </select>
-        </div>
-
-        <div>
-          <label className="text-sm font-semibold text-gray-700 mb-1.5 block">Vai trò *</label>
-          <div className="grid grid-cols-2 gap-2">
-            <button className="border-2 border-blue-500 bg-blue-50 text-blue-700 font-semibold py-3 rounded-xl text-sm">
-              Thợ cá nhân
-            </button>
-            <button className="border-2 border-gray-200 text-gray-600 font-semibold py-3 rounded-xl text-sm">
-              Đại lý
-            </button>
-          </div>
         </div>
 
         <div>
@@ -220,19 +384,25 @@ export default function MobileLogin({ onLogin }: Props) {
               </>
             )}
           </button>
-          <p className="text-xs text-gray-400 mt-1.5">Dùng để xác minh danh tính. AI sẽ kiểm tra tự động.</p>
         </div>
 
         <button
-          onClick={onLogin}
-          className="w-full bg-blue-600 text-white font-bold py-4 rounded-xl text-base shadow-md mt-2"
+          onClick={() => {
+            setError(null);
+            if (!name) {
+              setError('Vui lòng nhập Họ và tên.');
+              return;
+            }
+            if (!cccdUploaded) {
+              setError('Vui lòng chụp ảnh CCCD để xác minh.');
+              return;
+            }
+            handleRegisterSubmit();
+          }}
+          className="w-full bg-blue-600 text-white font-bold py-4 rounded-xl text-base shadow-md mt-2 active:bg-blue-700 transition-colors"
         >
           Gửi đăng ký
         </button>
-
-        <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
-          <p className="text-xs text-amber-700 font-medium">Admin sẽ xét duyệt trong 1-2 ngày làm việc.</p>
-        </div>
       </div>
     </div>
   );

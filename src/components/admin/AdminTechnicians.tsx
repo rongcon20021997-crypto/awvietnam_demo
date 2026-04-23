@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { mockUsers } from '../../mockData';
 import { User } from '../../types';
+import { supabase } from '../../lib/supabase';
 
 const statusConfig = {
   approved: { label: 'Đã duyệt', color: 'bg-green-100 text-green-700' },
@@ -10,25 +11,65 @@ const statusConfig = {
 };
 
 export default function AdminTechnicians() {
-  const [users, setUsers] = useState(mockUsers);
+  const [users, setUsers] = useState<User[]>([]);
   const [filter, setFilter] = useState<'all' | 'pending' | 'flagged'>('all');
   const [selected, setSelected] = useState<User | null>(null);
 
   const filtered = filter === 'all' ? users : users.filter(u => u.status === filter);
 
-  const handleApprove = (id: string) => {
-    setUsers(prev => prev.map(u => u.id === id ? { ...u, status: 'approved' as const } : u));
-    setSelected(null);
+  useEffect(() => {
+    fetchUsers();
+  }, []);
+
+  const fetchUsers = async () => {
+    const { data, error } = await supabase
+      .from('technicians')
+      .select('*')
+      .order('joined_at', { ascending: false });
+    
+    if (data) {
+      // Map Supabase snake_case to CamelCase if necessary, but here we assume match for demo
+      setUsers(data as any);
+    } else if (error) {
+      console.error('Fetch users error:', error);
+      setUsers([]);
+    }
   };
 
-  const handleReject = (id: string) => {
-    setUsers(prev => prev.map(u => u.id === id ? { ...u, status: 'rejected' as const } : u));
-    setSelected(null);
+  const handleApprove = async (id: string) => {
+    const { error } = await supabase
+      .from('technicians')
+      .update({ status: 'approved' })
+      .eq('id', id);
+
+    if (!error) {
+      setUsers(prev => prev.map(u => u.id === id ? { ...u, status: 'approved' as const } : u));
+      setSelected(null);
+    }
   };
 
-  const handleFlag = (id: string) => {
-    setUsers(prev => prev.map(u => u.id === id ? { ...u, status: 'flagged' as const } : u));
-    setSelected(null);
+  const handleReject = async (id: string) => {
+    const { error } = await supabase
+      .from('technicians')
+      .update({ status: 'rejected' })
+      .eq('id', id);
+
+    if (!error) {
+      setUsers(prev => prev.map(u => u.id === id ? { ...u, status: 'rejected' as const } : u));
+      setSelected(null);
+    }
+  };
+
+  const handleFlag = async (id: string) => {
+    const { error } = await supabase
+      .from('technicians')
+      .update({ status: 'flagged' })
+      .eq('id', id);
+
+    if (!error) {
+      setUsers(prev => prev.map(u => u.id === id ? { ...u, status: 'flagged' as const } : u));
+      setSelected(null);
+    }
   };
 
   return (

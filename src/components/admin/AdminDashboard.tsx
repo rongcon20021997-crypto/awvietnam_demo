@@ -1,7 +1,71 @@
-import { mockStats } from '../../mockData';
+import { useState, useEffect } from 'react';
+import { supabase } from '../../lib/supabase';
+// Removed mockStats import as we use real data now
 
 export default function AdminDashboard() {
-  const stats = mockStats;
+  const [technicians, setTechnicians] = useState<any[]>([]);
+  const [stats, setStats] = useState({
+    totalTechnicians: 0,
+    pendingApprovals: 0,
+    totalInstallations: 0,
+    thisMonthInstallations: 0,
+    totalPointsIssued: 0,
+    pendingRewards: 0,
+    topRegions: [] as { region: string; count: number }[],
+    topModels: [] as { model: string; count: number }[]
+  });
+
+  useEffect(() => {
+    fetchDashboardData();
+  }, []);
+
+  const fetchDashboardData = async () => {
+    const now = new Date();
+    const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+
+    // Fetch all data in parallel
+    const [
+      { data: techs },
+      { data: installs },
+      { count: installCount },
+      { count: thisMonthCount },
+      { count: pendingRewardsCount }
+    ] = await Promise.all([
+      supabase.from('technicians').select('*'),
+      supabase.from('installations').select('model'),
+      supabase.from('installations').select('*', { count: 'exact', head: true }),
+      supabase.from('installations').select('*', { count: 'exact', head: true }).gte('installed_at', firstDayOfMonth),
+      supabase.from('reward_requests').select('*', { count: 'exact', head: true }).eq('status', 'pending')
+    ]);
+
+    if (techs) {
+      setTechnicians(techs.sort((a, b) => (b.points || 0) - (a.points || 0)).slice(0, 5));
+
+      const pending = techs.filter(t => t.status === 'pending').length;
+      const points = techs.reduce((acc, t) => acc + (t.points || 0), 0);
+
+      // Compute top regions from technicians
+      const regionMap: Record<string, number> = {};
+      techs.forEach(t => { if (t.region) regionMap[t.region] = (regionMap[t.region] || 0) + 1; });
+      const topRegions = Object.entries(regionMap).map(([region, count]) => ({ region, count })).sort((a, b) => b.count - a.count).slice(0, 5);
+
+      // Compute top models from installations
+      const modelMap: Record<string, number> = {};
+      (installs || []).forEach((i: any) => { if (i.model) modelMap[i.model] = (modelMap[i.model] || 0) + 1; });
+      const topModels = Object.entries(modelMap).map(([model, count]) => ({ model, count })).sort((a, b) => b.count - a.count).slice(0, 5);
+
+      setStats({
+        totalTechnicians: techs.length,
+        pendingApprovals: pending,
+        totalInstallations: installCount || 0,
+        thisMonthInstallations: thisMonthCount || 0,
+        totalPointsIssued: points,
+        pendingRewards: pendingRewardsCount || 0,
+        topRegions: topRegions.length > 0 ? topRegions : [{ region: 'Chưa có dữ liệu', count: 0 }],
+        topModels: topModels.length > 0 ? topModels : [{ model: 'Chưa có dữ liệu', count: 0 }]
+      });
+    }
+  };
 
   const statCards = [
     { label: 'Tổng thợ', value: stats.totalTechnicians.toLocaleString(), sub: '+12 tháng này', color: 'text-blue-600', bg: 'bg-blue-50', icon: <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg> },
@@ -33,9 +97,9 @@ export default function AdminDashboard() {
         <div className="bg-white rounded-xl p-5 shadow-sm">
           <h3 className="font-bold text-gray-800 mb-4">Khu vực bán mạnh</h3>
           <div className="space-y-3">
-            {stats.topRegions.map((r, i) => {
-              const max = stats.topRegions[0].count;
-              const pct = Math.round((r.count / max) * 100);
+            {stats.topRegions.length > 0 ? stats.topRegions.map((r, i) => {
+              const max = stats.topRegions[0]?.count || 1;
+              const pct = max > 0 ? Math.round((r.count / max) * 100) : 0;
               return (
                 <div key={r.region} className="flex items-center gap-3">
                   <span className="w-5 text-xs font-bold text-gray-400 text-right">{i + 1}</span>
@@ -46,7 +110,7 @@ export default function AdminDashboard() {
                   <span className="text-sm font-bold text-gray-800 w-12 text-right">{r.count.toLocaleString()}</span>
                 </div>
               );
-            })}
+            }) : <p className="text-gray-400 text-sm text-center py-4">Chưa có dữ liệu</p>}
           </div>
         </div>
 
@@ -54,9 +118,9 @@ export default function AdminDashboard() {
         <div className="bg-white rounded-xl p-5 shadow-sm">
           <h3 className="font-bold text-gray-800 mb-4">Model bán chạy</h3>
           <div className="space-y-3">
-            {stats.topModels.map((m, i) => {
-              const max = stats.topModels[0].count;
-              const pct = Math.round((m.count / max) * 100);
+            {stats.topModels.length > 0 ? stats.topModels.map((m, i) => {
+              const max = stats.topModels[0]?.count || 1;
+              const pct = max > 0 ? Math.round((m.count / max) * 100) : 0;
               const colors = ['bg-blue-500', 'bg-green-500', 'bg-amber-500', 'bg-orange-500', 'bg-red-400'];
               return (
                 <div key={m.model} className="flex items-center gap-3">
@@ -68,7 +132,7 @@ export default function AdminDashboard() {
                   <span className="text-sm font-bold text-gray-800 w-12 text-right">{m.count.toLocaleString()}</span>
                 </div>
               );
-            })}
+            }) : <p className="text-gray-400 text-sm text-center py-4">Chưa có dữ liệu</p>}
           </div>
         </div>
       </div>
@@ -97,9 +161,35 @@ export default function AdminDashboard() {
         </div>
       </div>
 
-      {/* Recent activity */}
-      <div className="bg-white rounded-xl p-5 shadow-sm">
-        <h3 className="font-bold text-gray-800 mb-4">Hoạt động gần đây</h3>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Top technicians */}
+        <div className="bg-white rounded-xl p-5 shadow-sm lg:col-span-1">
+          <h3 className="font-bold text-gray-800 mb-4">Top thợ tiêu biểu</h3>
+          <div className="space-y-4">
+            {technicians.map((u, i) => (
+              <div key={u.id} className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 font-bold text-xs">
+                  {i + 1}
+                </div>
+                <div className="flex-1">
+                  <p className="text-sm font-semibold text-gray-800">{u.name}</p>
+                  <p className="text-[10px] text-gray-500">{u.region}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-sm font-bold text-gray-800">{u.points} điểm</p>
+                  <p className="text-[10px] text-green-600">Đã duyệt</p>
+                </div>
+              </div>
+            ))}
+            {technicians.length === 0 && (
+              <p className="text-center text-gray-400 text-sm py-4">Chưa có dữ liệu thợ</p>
+            )}
+          </div>
+        </div>
+
+        {/* Recent activity */}
+        <div className="bg-white rounded-xl p-5 shadow-sm lg:col-span-2">
+          <h3 className="font-bold text-gray-800 mb-4">Hoạt động gần đây</h3>
         <div className="space-y-3">
           {[
             { text: 'Nguyễn Văn Tuấn kích hoạt máy AW10ID1234567', time: '09:30', type: 'install', status: 'Đã duyệt' },
@@ -120,6 +210,7 @@ export default function AdminDashboard() {
               </div>
             );
           })}
+        </div>
         </div>
       </div>
     </div>

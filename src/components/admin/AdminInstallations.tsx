@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { mockInstallations } from '../../mockData';
 import { Installation } from '../../types';
+import { supabase } from '../../lib/supabase';
 
 const statusConfig = {
   approved: { label: 'Đã duyệt', color: 'bg-green-100 text-green-700' },
@@ -9,20 +10,64 @@ const statusConfig = {
 };
 
 export default function AdminInstallations() {
-  const [installs, setInstalls] = useState(mockInstallations);
+  const [installs, setInstalls] = useState<Installation[]>([]);
   const [filter, setFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('all');
   const [selected, setSelected] = useState<Installation | null>(null);
 
   const filtered = filter === 'all' ? installs : installs.filter(i => i.status === filter);
 
-  const handleApprove = (id: string) => {
-    setInstalls(prev => prev.map(i => i.id === id ? { ...i, status: 'approved' as const, points: 50 } : i));
-    setSelected(null);
+  useEffect(() => {
+    fetchInstalls();
+  }, []);
+
+  const fetchInstalls = async () => {
+    const { data, error } = await supabase
+      .from('installations')
+      .select('*')
+      .order('installed_at', { ascending: false });
+    
+    if (data) {
+      // Map Supabase snake_case to CamelCase
+      const formatted = data.map((i: any) => ({
+        ...i,
+        serialNumber: i.serial_number,
+        technicianName: i.technician_id, // For demo, we just show ID or should join
+        customerName: i.customer_name,
+        customerPhone: i.customer_phone,
+        installedAt: i.installed_at,
+        gpsValid: i.gps_valid,
+        aiScore: i.ai_score,
+        photos: i.photo_urls || []
+      }));
+      setInstalls(formatted);
+    } else if (error) {
+      console.error('Fetch installs error:', error);
+      setInstalls([]);
+    }
   };
 
-  const handleReject = (id: string) => {
-    setInstalls(prev => prev.map(i => i.id === id ? { ...i, status: 'rejected' as const, points: 0 } : i));
-    setSelected(null);
+  const handleApprove = async (id: string) => {
+    const { error } = await supabase
+      .from('installations')
+      .update({ status: 'approved', points: 50 })
+      .eq('id', id);
+
+    if (!error) {
+      setInstalls(prev => prev.map(i => i.id === id ? { ...i, status: 'approved' as const, points: 50 } : i));
+      setSelected(null);
+    }
+  };
+
+  const handleReject = async (id: string) => {
+    const { error } = await supabase
+      .from('installations')
+      .update({ status: 'rejected', points: 0 })
+      .eq('id', id);
+
+    if (!error) {
+      setInstalls(prev => prev.map(i => i.id === id ? { ...i, status: 'rejected' as const, points: 0 } : i));
+      setSelected(null);
+    }
   };
 
   return (
